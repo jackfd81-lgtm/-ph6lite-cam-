@@ -1,0 +1,8 @@
+cram0/
+cram_fast/
+cram_slow/
+mram_s/
+logs/
+__pycache__/
+*.pyc
+*.tmp
