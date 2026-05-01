@@ -25,7 +25,7 @@ WIDTH = 640
 HEIGHT = 480
 
 FPS_START = 5
-FPS_MAX = 10
+FPS_MAX = 8
 FPS_RAMP_EVERY_FRAMES = 150
 FPS_RAMP_STEP = 1
 MAX_READ_FAIL_STREAK_FOR_RAMP = 0
@@ -248,15 +248,21 @@ def main():
 
         if not ok or frame is None:
             _read_fail_streak += 1
+            dashboard["cam"] = "READ_FAIL"
+            dashboard["verdict"] = "NO_FRAME"
+            dashboard["reason"] = "CAMERA_READ_FAILED"
+            dashboard["soso"] = "NO_UPDATE"
+            print_dashboard(dashboard)
+            time.sleep(0.25)
 
-            if _read_fail_streak >= 5:
-                dashboard["cam"] = "FAIL"
-                dashboard["verdict"] = "NO_FRAME"
-                dashboard["reason"] = "CAMERA_READ_FAILED"
-                dashboard["soso"] = "NO_UPDATE"
-                print_dashboard(dashboard)
+            cap.release()
+            time.sleep(0.5)
 
-            time.sleep(0.1)
+            cap = cv2.VideoCapture(DEVICE, cv2.CAP_V4L2)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+            cap.set(cv2.CAP_PROP_FPS, FPS_TARGET)
+
             continue
 
         _read_fail_streak = 0
