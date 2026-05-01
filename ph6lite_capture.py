@@ -23,13 +23,23 @@ DEVICE = "/dev/video1"
 
 WIDTH = 640
 HEIGHT = 480
-FPS_TARGET = 5
+
+FPS_START = 5
+FPS_MAX = 10
+FPS_RAMP_EVERY_FRAMES = 150
+FPS_RAMP_STEP = 1
+MAX_READ_FAIL_STREAK_FOR_RAMP = 0
+
+FPS_TARGET = FPS_START
 
 FAST_EVERY_N = 1
 SLOW_EVERY_N = 10
 
 MOTION_THRESHOLD = 18
-MOTION_FRACTION_PASS = 0.015
+MOTION_FRACTION_PASS = 0.02
+LAPLACIAN_VAR_MIN = 20.0
+BRIGHT_FRACTION_MAX = 0.30
+DARK_FRACTION_MAX = 0.50
 DARK_PIXEL_THRESHOLD = 35
 BRIGHT_PIXEL_THRESHOLD = 220
 
@@ -104,16 +114,15 @@ def pseudo_measure(gray, prev_gray):
 
 
 def pseudo_adjudicate(measurement):
-    if measurement["motion_fraction"] >= MOTION_FRACTION_PASS:
-        return {
-            "verdict": "PASS",
-            "reason": "MOTION_TRIGGER",
-        }
-
-    return {
-        "verdict": "DROP",
-        "reason": "NO_SIGNIFICANT_MOTION",
-    }
+    if measurement["motion_fraction"] < MOTION_FRACTION_PASS:
+        return {"verdict": "DROP", "reason": "NO_SIGNIFICANT_MOTION"}
+    if measurement["laplacian_var"] < LAPLACIAN_VAR_MIN:
+        return {"verdict": "DROP", "reason": "BLURRY"}
+    if measurement["bright_fraction"] > BRIGHT_FRACTION_MAX:
+        return {"verdict": "DROP", "reason": "OVEREXPOSED"}
+    if measurement["dark_fraction"] > DARK_FRACTION_MAX:
+        return {"verdict": "DROP", "reason": "UNDEREXPOSED"}
+    return {"verdict": "PASS", "reason": "MOTION_TRIGGER"}
 
 
 def soso_advisory(frame_id, measurement, previous_measurement):
@@ -161,6 +170,7 @@ def make_dashboard():
     return {
         "cam": "UNKNOWN",
         "fps": 0.0,
+        "fps_target": FPS_START,
         "fast": "ACTIVE",
         "slow": f"EVERY {SLOW_EVERY_N}",
         "soso": "INIT",
@@ -173,6 +183,10 @@ def make_dashboard():
         "brightness_min": 0,
         "brightness_max": 0,
         "brightness_avg": 0.0,
+        "laplacian_var": 0.0,
+        "entropy": 0.0,
+        "dark_fraction": 0.0,
+        "bright_fraction": 0.0,
         "packet_hash_short": "NONE",
     }
 
@@ -183,6 +197,7 @@ def print_dashboard(d):
     print("=" * 42)
     print(f"CAM:          {d['cam']}")
     print(f"FPS:          {d['fps']:.2f}")
+    print(f"FPS TARGET:   {d['fps_target']}")
     print(f"FRAME:        {d['frame_id']}")
     print(f"FAST:         {d['fast']}")
     print(f"SLOW:         {d['slow']}")
@@ -194,6 +209,10 @@ def print_dashboard(d):
     print(f"DROP:         {d['drop_count']}")
     print("-" * 42)
     print(f"MOTION:       {d['motion_fraction']:.6f}")
+    print(f"LAPLACIAN:    {d['laplacian_var']:.2f}")
+    print(f"ENTROPY:      {d['entropy']:.4f}")
+    print(f"DARK FRAC:    {d['dark_fraction']:.4f}")
+    print(f"BRIGHT FRAC:  {d['bright_fraction']:.4f}")
     print(f"BRIGHT MIN:   {d['brightness_min']}")
     print(f"BRIGHT MAX:   {d['brightness_max']}")
     print(f"BRIGHT AVG:   {d['brightness_avg']:.3f}")
@@ -220,6 +239,8 @@ def main():
     start_time = time.time()
     dashboard = make_dashboard()
     _read_fail_streak = 0
+    current_fps_target = FPS_START
+    last_ramp_frame = 0
 
     while True:
         ok, frame = cap.read()
@@ -240,6 +261,15 @@ def main():
 
         _read_fail_streak = 0
         dashboard["cam"] = "OK"
+
+        if (
+            current_fps_target < FPS_MAX
+            and frame_id - last_ramp_frame >= FPS_RAMP_EVERY_FRAMES
+            and _read_fail_streak <= MAX_READ_FAIL_STREAK_FOR_RAMP
+        ):
+            current_fps_target += FPS_RAMP_STEP
+            last_ramp_frame = frame_id
+            cap.set(cv2.CAP_PROP_FPS, current_fps_target)
 
         frame_id += 1
 
@@ -294,10 +324,15 @@ def main():
         dashboard["verdict"] = adjudication["verdict"]
         dashboard["reason"] = adjudication["reason"]
         dashboard["motion_fraction"] = measurement["motion_fraction"]
+        dashboard["laplacian_var"] = measurement["laplacian_var"]
+        dashboard["entropy"] = measurement["entropy"]
+        dashboard["dark_fraction"] = measurement["dark_fraction"]
+        dashboard["bright_fraction"] = measurement["bright_fraction"]
         dashboard["brightness_min"] = measurement["brightness_min"]
         dashboard["brightness_max"] = measurement["brightness_max"]
         dashboard["brightness_avg"] = measurement["brightness_avg"]
         dashboard["packet_hash_short"] = packet_hash[:16]
+        dashboard["fps_target"] = current_fps_target
 
         print_dashboard(dashboard)
 
@@ -305,7 +340,7 @@ def main():
         prev_gray = gray
         prev_packet_hash = packet_hash
 
-        time.sleep(max(0, (1.0 / FPS_TARGET)))
+        time.sleep(max(0, (1.0 / current_fps_target)))
 
 
 if __name__ == "__main__":
